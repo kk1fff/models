@@ -156,11 +156,12 @@ def input_fn(is_training, data_dir, batch_size, num_epochs=1):
 
   iterator = dataset.make_one_shot_iterator()
   images, labels = iterator.get_next()
-  return images, labels
+  return { 'x': images } , labels
 
 
 def resnet_model_fn(features, labels, mode, params):
   """Our model_fn for ResNet to be used with our Estimator."""
+  features = features['x']
   tf.summary.image('images', features, max_outputs=6)
 
   network = resnet_model.imagenet_resnet_v2(
@@ -174,7 +175,12 @@ def resnet_model_fn(features, labels, mode, params):
   }
 
   if mode == tf.estimator.ModeKeys.PREDICT:
-    return tf.estimator.EstimatorSpec(mode=mode, predictions=predictions)
+    return tf.estimator.EstimatorSpec(
+      mode=mode,
+      predictions=predictions,
+      export_outputs={
+        tf.saved_model.signature_constants.DEFAULT_SERVING_SIGNATURE_DEF_KEY: tf.estimator.export.PredictOutput(predictions)
+      })
 
   # Calculate loss, which includes softmax cross entropy and L2 regularization.
   cross_entropy = tf.losses.softmax_cross_entropy(
@@ -250,6 +256,8 @@ def main(unused_argv):
           'batch_size': FLAGS.batch_size,
       })
 
+  print("Model Path: {}".format(FLAGS.model_dir))
+  print(resnet_classifier.get_variable_names())
   for _ in range(FLAGS.train_epochs // FLAGS.epochs_per_eval):
     tensors_to_log = {
         'learning_rate': 'learning_rate',
@@ -271,6 +279,10 @@ def main(unused_argv):
         input_fn=lambda: input_fn(False, FLAGS.data_dir, FLAGS.batch_size))
     print(eval_results)
 
+  features = { 'x' : tf.placeholder(tf.float32, (1, _DEFAULT_IMAGE_SIZE, _DEFAULT_IMAGE_SIZE, _NUM_CHANNELS)) }
+  resnet_classifier.export_savedmodel(
+    'SavedModel/', 
+    tf.estimator.export.build_raw_serving_input_receiver_fn(features))
 
 if __name__ == '__main__':
   tf.logging.set_verbosity(tf.logging.INFO)
